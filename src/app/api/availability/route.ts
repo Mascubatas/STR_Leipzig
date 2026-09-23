@@ -4,6 +4,7 @@ import { bookingStore } from "@/lib/booking-store";
 export async function GET() {
   try {
     bookingStore.releaseExpiredHolds();
+    await bookingStore.syncFromNeon();
     const property = bookingStore.getProperty();
     const allBookings = bookingStore.getAllBookings();
     const blockedDates = bookingStore.getBlockedDates();

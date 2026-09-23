@@ -9,6 +9,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized admin access" }, { status: 403 });
     }
 
+    await bookingStore.syncFromNeon();
     const allBookings = bookingStore.getAllBookings();
     const blockedDates = bookingStore.getBlockedDates();
 

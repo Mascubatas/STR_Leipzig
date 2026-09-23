@@ -11,7 +11,12 @@ export async function GET(
       return NextResponse.json({ error: "Reference missing" }, { status: 400 });
     }
 
-    const booking = bookingStore.getBookingByReference(reference);
+    let booking = bookingStore.getBookingByReference(reference);
+    if (!booking) {
+      await bookingStore.syncFromNeon();
+      booking = bookingStore.getBookingByReference(reference);
+    }
+
     if (!booking) {
       return NextResponse.json(
         { error: "Booking not found with this reference." },

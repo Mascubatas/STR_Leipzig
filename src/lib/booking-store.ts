@@ -1,5 +1,7 @@
 import QRCode from "qrcode";
 import { addMinutes, differenceInCalendarDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
+import { neon } from "@neondatabase/serverless";
+import { ensureNeonTables } from "../db/bootstrap";
 import { calculateBookingPrice, PricingBreakdown } from "./pricing";
 import {
   LEIPZIG_PROPERTY_SEED,
@@ -386,6 +388,62 @@ class BookingMemoryStore {
 
     this.bookings.set(bookingReference, booking);
 
+    // Persist directly to Neon PostgreSQL database if DATABASE_URL is configured
+    try {
+      const dbUrl = process.env.DATABASE_URL;
+      if (dbUrl && !dbUrl.includes("sample")) {
+        await ensureNeonTables();
+        const sql = neon(dbUrl);
+        await sql`
+          INSERT INTO bookings (
+            id, booking_reference, property_id, guest_name, guest_email, guest_phone,
+            check_in_date, check_out_date, nights, number_of_guests, total_amount_minor,
+            currency, booking_status, payment_status, special_requests, qr_code_data_url, payment_provider_id
+          ) VALUES (
+            gen_random_uuid(),
+            ${booking.bookingReference},
+            ${this.property.id}::uuid,
+            ${booking.guestName},
+            ${booking.guestEmail},
+            ${booking.guestPhone},
+            ${booking.checkInDate}::date,
+            ${booking.checkOutDate}::date,
+            ${booking.nights},
+            ${booking.numberOfGuests},
+            ${booking.totalAmountMinor},
+            ${booking.currency},
+            ${booking.bookingStatus},
+            ${booking.paymentStatus},
+            ${booking.specialRequests || null},
+            ${booking.qrCodeDataUrl},
+            ${booking.paymentProviderId || null}
+          )
+          ON CONFLICT (booking_reference) DO NOTHING;
+        `;
+
+        await sql`
+          INSERT INTO booking_price_breakdown (
+            id, booking_reference, nights_count, base_accommodation_minor,
+            weekend_surcharge_minor, cleaning_fee_minor, tourist_tax_minor,
+            discount_minor, promo_code_used, final_total_minor
+          ) VALUES (
+            gen_random_uuid(),
+            ${booking.bookingReference},
+            ${breakdown.nightsCount},
+            ${breakdown.baseAccommodationMinor},
+            ${breakdown.weekendSurchargeMinor},
+            ${breakdown.cleaningFeeMinor},
+            ${breakdown.touristTaxMinor},
+            ${breakdown.discountMinor},
+            ${breakdown.promoCodeApplied || null},
+            ${breakdown.finalTotalMinor}
+          );
+        `;
+      }
+    } catch (neonErr) {
+      console.warn("⚠️ Neon persistence notice:", neonErr);
+    }
+
     this.addAuditLog({
       action: "BOOKING_CONFIRMED",
       actorEmail: params.guestEmail,
@@ -399,6 +457,60 @@ class BookingMemoryStore {
     });
 
     return booking;
+  }
+
+  // Synchronize bookings from Neon PostgreSQL
+  async syncFromNeon(): Promise<void> {
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl || dbUrl.includes("sample")) return;
+
+    try {
+      await ensureNeonTables();
+      const sql = neon(dbUrl);
+      const rows = await sql`
+        SELECT * FROM bookings ORDER BY created_at DESC;
+      `;
+      for (const row of rows) {
+        const ref = row.booking_reference;
+        if (!this.bookings.has(ref)) {
+          this.bookings.set(ref, {
+            id: String(row.id),
+            bookingReference: ref,
+            propertyId: String(row.property_id || this.property.id),
+            guestName: String(row.guest_name),
+            guestEmail: String(row.guest_email),
+            guestPhone: String(row.guest_phone || ""),
+            checkInDate: typeof row.check_in_date === "string" ? row.check_in_date : new Date(row.check_in_date).toISOString().split("T")[0],
+            checkOutDate: typeof row.check_out_date === "string" ? row.check_out_date : new Date(row.check_out_date).toISOString().split("T")[0],
+            nights: Number(row.nights),
+            numberOfGuests: Number(row.number_of_guests),
+            totalAmountMinor: Number(row.total_amount_minor),
+            currency: String(row.currency || "EUR"),
+            bookingStatus: row.booking_status as BookingRecord["bookingStatus"],
+            paymentStatus: row.payment_status as BookingRecord["paymentStatus"],
+            specialRequests: row.special_requests || undefined,
+            qrCodeDataUrl: row.qr_code_data_url || "",
+            cancellationReason: row.cancellation_reason || undefined,
+            refundAmountMinor: row.refund_amount_minor ? Number(row.refund_amount_minor) : undefined,
+            paymentProviderId: row.payment_provider_id || undefined,
+            breakdown: {
+              nightsCount: Number(row.nights),
+              baseAccommodationMinor: Number(row.total_amount_minor) - 6500,
+              weekendSurchargeMinor: 0,
+              cleaningFeeMinor: 6500,
+              touristTaxMinor: 0,
+              discountMinor: 0,
+              finalTotalMinor: Number(row.total_amount_minor),
+              nightlyBreakdown: [],
+            },
+            createdAt: new Date(row.created_at),
+            updatedAt: new Date(row.updated_at),
+          });
+        }
+      }
+    } catch (syncErr) {
+      console.warn("⚠️ Neon sync notice:", syncErr);
+    }
   }
 
   // Retrieve booking by reference
