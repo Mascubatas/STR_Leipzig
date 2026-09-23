@@ -37,7 +37,7 @@ export const SEED_PHOTOS = [
     isHero: true,
   },
   {
-    url: "https://images.unsplash.com/photo-1540518614846-7ede433c4ef7?auto=format&fit=crop&w=1600&q=80",
+    url: "https://images.unsplash.com/photo-1616594039964-ae9021a400a0?auto=format&fit=crop&w=1600&q=80",
     caption: "Master bedroom with luxury king-size boxspring bed and courtyard tranquility",
     sortOrder: 2,
     isHero: false,
