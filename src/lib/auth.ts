@@ -1,6 +1,9 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
+import { neon } from "@neondatabase/serverless";
+import { ensureNeonTables } from "@/db/bootstrap";
+import { getDatabaseUrl } from "@/db/connection";
 
 const AUTH_SECRET = process.env.AUTH_SECRET || "leipzig_stay_secure_jwt_secret_dev_key_32_chars";
 const COOKIE_NAME = "leipzig_stay_session";
@@ -81,9 +84,28 @@ export function verifyToken(token: string): SessionUser | null {
 export async function registerUser(email: string, password: string, fullName: string, role: "GUEST" | "ADMIN" = "GUEST"): Promise<SessionUser> {
   await initDefaultUsers();
   const normalized = email.toLowerCase().trim();
+
+  // Check Neon DB for existing user
+  try {
+    const dbUrl = getDatabaseUrl();
+    if (dbUrl) {
+      await ensureNeonTables();
+      const sql = neon(dbUrl);
+      const existing = await sql`SELECT id FROM users WHERE LOWER(email) = ${normalized} LIMIT 1;`;
+      if (existing.length > 0) {
+        throw new Error("An account with this email address already exists.");
+      }
+    }
+  } catch (err) {
+    if ((err as Error).message.includes("already exists")) {
+      throw err;
+    }
+  }
+
   if (memoryUsers.has(normalized)) {
     throw new Error("An account with this email address already exists.");
   }
+
   const passwordHash = await hashPassword(password);
   const newUser: StoredUser = {
     id: `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -93,13 +115,58 @@ export async function registerUser(email: string, password: string, fullName: st
     passwordHash,
   };
   memoryUsers.set(normalized, newUser);
+
+  // Persist to Neon
+  try {
+    const dbUrl = getDatabaseUrl();
+    if (dbUrl) {
+      const sql = neon(dbUrl);
+      await sql`
+        INSERT INTO users (id, email, full_name, role, password_hash)
+        VALUES (gen_random_uuid(), ${normalized}, ${fullName}, ${role}, ${passwordHash})
+        ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name, password_hash = EXCLUDED.password_hash;
+      `;
+    }
+  } catch (err) {
+    console.warn("Neon user save notice:", err);
+  }
+
   return { id: newUser.id, email: newUser.email, fullName: newUser.fullName, role: newUser.role };
 }
 
 export async function authenticateUser(email: string, password: string): Promise<SessionUser | null> {
   await initDefaultUsers();
   const normalized = email.toLowerCase().trim();
-  const user = memoryUsers.get(normalized);
+
+  let user = memoryUsers.get(normalized);
+
+  // Look up in Neon if not in memory
+  if (!user) {
+    try {
+      const dbUrl = getDatabaseUrl();
+      if (dbUrl) {
+        await ensureNeonTables();
+        const sql = neon(dbUrl);
+        const rows = await sql`
+          SELECT id, email, full_name, role, password_hash FROM users WHERE LOWER(email) = ${normalized} LIMIT 1;
+        `;
+        if (rows.length > 0) {
+          const row = rows[0];
+          user = {
+            id: String(row.id),
+            email: String(row.email),
+            fullName: String(row.full_name),
+            role: row.role as "GUEST" | "ADMIN",
+            passwordHash: String(row.password_hash),
+          };
+          memoryUsers.set(normalized, user);
+        }
+      }
+    } catch (err) {
+      console.warn("Neon user lookup notice:", err);
+    }
+  }
+
   if (!user) return null;
 
   const valid = await verifyPassword(password, user.passwordHash);

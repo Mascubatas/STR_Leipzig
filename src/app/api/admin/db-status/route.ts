@@ -89,6 +89,19 @@ export async function GET(req: NextRequest) {
       // Table may not exist yet
     }
 
+    // Query registered users in Neon
+    let usersInNeon: unknown[] = [];
+    try {
+      usersInNeon = await sql`
+        SELECT id, email, full_name, role, created_at
+        FROM users
+        ORDER BY created_at DESC
+        LIMIT 20;
+      `;
+    } catch {
+      // Table may not exist yet
+    }
+
     return NextResponse.json({
       status: "CONNECTED",
       databaseHost: maskedUrl.split("@")[1]?.split("/")[0] || "connected",
@@ -98,6 +111,8 @@ export async function GET(req: NextRequest) {
       tablesInDatabase: tables.map((t) => t.table_name),
       bookingsCount: bookingsInNeon.length,
       bookingsInNeon,
+      usersCount: usersInNeon.length,
+      usersInNeon,
     });
   } catch (error) {
     return NextResponse.json({

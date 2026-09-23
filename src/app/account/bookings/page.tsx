@@ -42,19 +42,11 @@ export function GuestBookingsPage() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   const fetchBookings = (email: string) => {
-    fetch("/api/availability") // or fetch user bookings
-      .then(() => {
-        // Fetch specific bookings from store
-        return fetch("/api/admin/bookings"); // If admin or fetch by email
-      })
+    fetch(`/api/account/bookings?email=${encodeURIComponent(email)}`)
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
-          // Filter to user's bookings
-          const userBookings = (data.bookings || []).filter(
-            (b: { guestEmail: string }) => b.guestEmail.toLowerCase() === email.toLowerCase()
-          );
-          setBookings(userBookings);
+          setBookings(data.bookings || []);
         }
       })
       .catch(() => {})
