@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import { addMinutes, differenceInCalendarDays, isAfter, isBefore, parseISO, startOfDay } from "date-fns";
 import { neon } from "@neondatabase/serverless";
 import { ensureNeonTables } from "../db/bootstrap";
+import { getDatabaseUrl } from "../db/connection";
 import { calculateBookingPrice, PricingBreakdown } from "./pricing";
 import {
   LEIPZIG_PROPERTY_SEED,
@@ -388,10 +389,10 @@ class BookingMemoryStore {
 
     this.bookings.set(bookingReference, booking);
 
-    // Persist directly to Neon PostgreSQL database if DATABASE_URL is configured
+    // Persist directly to Neon PostgreSQL database if DATABASE_URL/POSTGRES_URL is configured
     try {
-      const dbUrl = process.env.DATABASE_URL;
-      if (dbUrl && !dbUrl.includes("sample")) {
+      const dbUrl = getDatabaseUrl();
+      if (dbUrl) {
         await ensureNeonTables();
         const sql = neon(dbUrl);
         await sql`
@@ -461,8 +462,8 @@ class BookingMemoryStore {
 
   // Synchronize bookings from Neon PostgreSQL
   async syncFromNeon(): Promise<void> {
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl || dbUrl.includes("sample")) return;
+    const dbUrl = getDatabaseUrl();
+    if (!dbUrl) return;
 
     try {
       await ensureNeonTables();

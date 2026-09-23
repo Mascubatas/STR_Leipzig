@@ -1,12 +1,16 @@
 import { neon } from "@neondatabase/serverless";
+import { getDatabaseUrl } from "./connection";
 import { LEIPZIG_PROPERTY_SEED } from "./seed-data";
 
 let isBootstrapped = false;
 
-export async function ensureNeonTables() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString || connectionString.includes("sample") || isBootstrapped) {
-    return;
+export async function ensureNeonTables(force = false) {
+  const connectionString = getDatabaseUrl();
+  if (!connectionString) {
+    return { success: false, reason: "No database connection URL found (neither DATABASE_URL nor POSTGRES_URL)" };
+  }
+  if (isBootstrapped && !force) {
+    return { success: true, reason: "Already bootstrapped" };
   }
 
   try {
@@ -142,7 +146,9 @@ export async function ensureNeonTables() {
 
     isBootstrapped = true;
     console.log("✅ Neon PostgreSQL schema & property bootstrapped successfully.");
+    return { success: true };
   } catch (err) {
     console.warn("⚠️ Neon bootstrap notice:", err);
+    return { success: false, error: (err as Error).message };
   }
 }
