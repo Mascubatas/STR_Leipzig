@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck, Calendar, Users, Sparkles, AlertCircle, ArrowRight } from "lucide-react";
+import { ShieldCheck, Calendar as CalendarIcon, Users, Sparkles, AlertCircle, ArrowRight } from "lucide-react";
 import { formatMinorToEuro, PricingBreakdown } from "@/lib/pricing";
 
 interface BookingPriceCardProps {
@@ -10,23 +10,43 @@ interface BookingPriceCardProps {
   checkOut: string | null;
   basePriceMinor: number;
   minStayNights: number;
+  onDatesChange?: (checkIn: string | null, checkOut: string | null) => void;
 }
 
 export function BookingPriceCard({
-  checkIn,
-  checkOut,
+  checkIn: externalCheckIn,
+  checkOut: externalCheckOut,
   basePriceMinor,
   minStayNights,
+  onDatesChange,
 }: BookingPriceCardProps) {
   const router = useRouter();
+
+  // Internal state kept in sync with external props
+  const [internalCheckIn, setInternalCheckIn] = useState(externalCheckIn || "");
+  const [internalCheckOut, setInternalCheckOut] = useState(externalCheckOut || "");
   const [guests, setGuests] = useState(2);
   const [promoCode, setPromoCode] = useState("");
   const [breakdown, setBreakdown] = useState<PricingBreakdown | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Today in YYYY-MM-DD
+  const todayStr = new Date().toISOString().split("T")[0];
+
   useEffect(() => {
-    if (checkIn && checkOut) {
+    if (externalCheckIn) setInternalCheckIn(externalCheckIn);
+  }, [externalCheckIn]);
+
+  useEffect(() => {
+    if (externalCheckOut) setInternalCheckOut(externalCheckOut);
+  }, [externalCheckOut]);
+
+  const activeCheckIn = externalCheckIn || internalCheckIn;
+  const activeCheckOut = externalCheckOut || internalCheckOut;
+
+  useEffect(() => {
+    if (activeCheckIn && activeCheckOut) {
       setLoading(true);
       setError(null);
 
@@ -34,8 +54,8 @@ export function BookingPriceCard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkInDate: checkIn,
-          checkOutDate: checkOut,
+          checkInDate: activeCheckIn,
+          checkOutDate: activeCheckOut,
           numberOfGuests: guests,
           promoCode: promoCode.trim() || undefined,
         }),
@@ -56,16 +76,38 @@ export function BookingPriceCard({
       setBreakdown(null);
       setError(null);
     }
-  }, [checkIn, checkOut, guests, promoCode]);
+  }, [activeCheckIn, activeCheckOut, guests, promoCode]);
+
+  const handleCheckInChange = (newIn: string) => {
+    setInternalCheckIn(newIn);
+    let newOut = activeCheckOut;
+    // If checkOut is before or equal to checkIn, advance it by minStayNights
+    if (newOut && newOut <= newIn) {
+      const inDate = new Date(newIn);
+      inDate.setDate(inDate.getDate() + minStayNights);
+      newOut = inDate.toISOString().split("T")[0];
+      setInternalCheckOut(newOut);
+    }
+    if (onDatesChange) {
+      onDatesChange(newIn, newOut || null);
+    }
+  };
+
+  const handleCheckOutChange = (newOut: string) => {
+    setInternalCheckOut(newOut);
+    if (onDatesChange) {
+      onDatesChange(activeCheckIn || null, newOut);
+    }
+  };
 
   const handleProceedToCheckout = () => {
-    if (!checkIn || !checkOut) {
-      alert("Please select both check-in and check-out dates from the calendar first.");
+    if (!activeCheckIn || !activeCheckOut) {
+      alert("Please select both check-in and check-out dates first.");
       return;
     }
     const params = new URLSearchParams({
-      checkIn,
-      checkOut,
+      checkIn: activeCheckIn,
+      checkOut: activeCheckOut,
       guests: guests.toString(),
       ...(promoCode ? { promo: promoCode } : {}),
     });
@@ -90,23 +132,36 @@ export function BookingPriceCard({
 
       {/* Date & Guest Inputs */}
       <div className="mt-6 space-y-3">
-        <div className="border border-stone-200 rounded-2xl overflow-hidden divide-y divide-stone-200">
+        <div className="border border-stone-200 rounded-2xl overflow-hidden divide-y divide-stone-200 shadow-xs">
           <div className="grid grid-cols-2 divide-x divide-stone-200">
-            <div className="p-3 bg-stone-50/50">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-stone-500 block">
+            {/* Interactive Check-in date input */}
+            <div className="p-3 bg-stone-50/70 hover:bg-stone-50 transition-colors">
+              <label htmlFor="card-checkin" className="text-[10px] uppercase font-bold tracking-wider text-stone-500 block mb-1">
                 Check-in
-              </span>
-              <span className="text-xs font-semibold text-stone-800 truncate block mt-0.5">
-                {checkIn || "Select date"}
-              </span>
+              </label>
+              <input
+                id="card-checkin"
+                type="date"
+                min={todayStr}
+                value={activeCheckIn}
+                onChange={(e) => handleCheckInChange(e.target.value)}
+                className="w-full text-xs font-semibold text-stone-800 bg-transparent focus:outline-none cursor-pointer"
+              />
             </div>
-            <div className="p-3 bg-stone-50/50">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-stone-500 block">
+
+            {/* Interactive Check-out date input */}
+            <div className="p-3 bg-stone-50/70 hover:bg-stone-50 transition-colors">
+              <label htmlFor="card-checkout" className="text-[10px] uppercase font-bold tracking-wider text-stone-500 block mb-1">
                 Check-out
-              </span>
-              <span className="text-xs font-semibold text-stone-800 truncate block mt-0.5">
-                {checkOut || "Select date"}
-              </span>
+              </label>
+              <input
+                id="card-checkout"
+                type="date"
+                min={activeCheckIn || todayStr}
+                value={activeCheckOut}
+                onChange={(e) => handleCheckOutChange(e.target.value)}
+                className="w-full text-xs font-semibold text-stone-800 bg-transparent focus:outline-none cursor-pointer"
+              />
             </div>
           </div>
 
@@ -123,7 +178,7 @@ export function BookingPriceCard({
                   type="button"
                   onClick={() => setGuests(Math.max(1, guests - 1))}
                   disabled={guests <= 1}
-                  className="w-6 h-6 rounded-full border border-stone-300 flex items-center justify-center text-xs font-bold text-stone-600 disabled:opacity-30"
+                  className="w-6 h-6 rounded-full border border-stone-300 flex items-center justify-center text-xs font-bold text-stone-600 disabled:opacity-30 cursor-pointer"
                 >
                   -
                 </button>
@@ -131,13 +186,25 @@ export function BookingPriceCard({
                   type="button"
                   onClick={() => setGuests(Math.min(4, guests + 1))}
                   disabled={guests >= 4}
-                  className="w-6 h-6 rounded-full border border-stone-300 flex items-center justify-center text-xs font-bold text-stone-600 disabled:opacity-30"
+                  className="w-6 h-6 rounded-full border border-stone-300 flex items-center justify-center text-xs font-bold text-stone-600 disabled:opacity-30 cursor-pointer"
                 >
                   +
                 </button>
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Calendar quick jump helper */}
+        <div className="flex items-center justify-between pt-1 px-1">
+          <a
+            href="#calendar"
+            className="text-[11px] text-amber-800 hover:text-amber-900 font-medium flex items-center gap-1 underline"
+          >
+            <CalendarIcon className="w-3 h-3" />
+            Pick from visual calendar below
+          </a>
+          <span className="text-[11px] text-stone-400">Min. {minStayNights} nights</span>
         </div>
 
         {/* Promo code field */}
@@ -209,7 +276,7 @@ export function BookingPriceCard({
         <button
           type="button"
           onClick={handleProceedToCheckout}
-          disabled={!checkIn || !checkOut || Boolean(error)}
+          disabled={!activeCheckIn || !activeCheckOut || Boolean(error)}
           className="w-full py-4 rounded-2xl bg-amber-800 hover:bg-amber-900 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
         >
           <span>Reserve Dates & Checkout</span>

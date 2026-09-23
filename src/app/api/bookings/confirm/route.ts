@@ -6,6 +6,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const {
       holdToken,
+      checkInDate,
+      checkOutDate,
       guestName,
       guestEmail,
       guestPhone,
@@ -15,9 +17,9 @@ export async function POST(req: NextRequest) {
       paymentId,
     } = body;
 
-    if (!holdToken) {
+    if (!holdToken && (!checkInDate || !checkOutDate)) {
       return NextResponse.json(
-        { error: "Booking hold token is required." },
+        { error: "Booking hold token or stay dates are required." },
         { status: 400 }
       );
     }
@@ -31,6 +33,8 @@ export async function POST(req: NextRequest) {
 
     const booking = await bookingStore.confirmBooking({
       holdToken,
+      checkInDate,
+      checkOutDate,
       guestName,
       guestEmail,
       guestPhone,

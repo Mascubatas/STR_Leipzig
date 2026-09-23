@@ -4,7 +4,7 @@ import React, { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Calendar,
+  Calendar as CalendarIcon,
   Clock,
   ShieldCheck,
   CreditCard,
@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Sparkles,
+  Users,
 } from "lucide-react";
 import { formatMinorToEuro, PricingBreakdown } from "@/lib/pricing";
 
@@ -20,8 +21,28 @@ function BookingCheckoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [checkInDate, setCheckInDate] = useState(searchParams.get("checkIn") || "");
-  const [checkOutDate, setCheckOutDate] = useState(searchParams.get("checkOut") || "");
+  // Calculate default dates (tomorrow to 3 days after tomorrow)
+  const getDefaultDates = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const inStr = tomorrow.toISOString().split("T")[0];
+
+    const departure = new Date();
+    departure.setDate(departure.getDate() + 4);
+    const outStr = departure.toISOString().split("T")[0];
+
+    return { inStr, outStr };
+  };
+
+  const defaults = getDefaultDates();
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const [checkInDate, setCheckInDate] = useState(
+    searchParams.get("checkIn") || defaults.inStr
+  );
+  const [checkOutDate, setCheckOutDate] = useState(
+    searchParams.get("checkOut") || defaults.outStr
+  );
   const [numberOfGuests, setNumberOfGuests] = useState(
     Number(searchParams.get("guests")) || 2
   );
@@ -42,7 +63,7 @@ function BookingCheckoutContent() {
   const [specialRequests, setSpecialRequests] = useState("");
 
   // Payment Form (Test Mode)
-  const [cardNumber, setCardNumber] = useState("4242 •••• •••• 4242");
+  const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
   const [cardExpiry, setCardExpiry] = useState("12/28");
   const [cardCvc, setCardCvc] = useState("888");
   const [cardName, setCardName] = useState("");
@@ -55,48 +76,57 @@ function BookingCheckoutContent() {
       .then((res) => res.json())
       .then((data) => {
         if (data.user) {
-          setGuestName(data.user.fullName || "");
-          setGuestEmail(data.user.email || "");
-          setCardName(data.user.fullName || "");
+          setGuestName((prev) => prev || data.user.fullName || "");
+          setGuestEmail((prev) => prev || data.user.email || "");
+          setCardName((prev) => prev || data.user.fullName || "");
         }
       })
       .catch(() => {});
   }, []);
 
-  // Request 10-minute hold whenever dates are selected
-  useEffect(() => {
-    if (checkInDate && checkOutDate) {
-      setHoldingLoading(true);
-      setHoldError(null);
+  // Request 10-minute hold whenever dates or guests change
+  const requestHold = async (inDate: string, outDate: string, guests: number, promo?: string) => {
+    if (!inDate || !outDate) return null;
+    setHoldingLoading(true);
+    setHoldError(null);
 
-      fetch("/api/bookings/hold", {
+    try {
+      const res = await fetch("/api/bookings/hold", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          checkInDate,
-          checkOutDate,
-          numberOfGuests,
-          promoCode: promoCode.trim() || undefined,
+          checkInDate: inDate,
+          checkOutDate: outDate,
+          numberOfGuests: guests,
+          promoCode: promo?.trim() || undefined,
         }),
-      })
-        .then(async (res) => {
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data.error || "Could not reserve dates");
-          }
-          setHoldToken(data.holdToken);
-          const expires = new Date(data.expiresAt);
-          setHoldExpiresAt(expires);
-          setBreakdown(data.priceBreakdown);
-          const diff = Math.max(0, Math.floor((expires.getTime() - Date.now()) / 1000));
-          setTimeLeftSeconds(diff);
-        })
-        .catch((err) => {
-          setHoldError(err.message);
-          setHoldToken(null);
-          setBreakdown(null);
-        })
-        .finally(() => setHoldingLoading(false));
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Selected dates are unavailable.");
+      }
+
+      setHoldToken(data.holdToken);
+      const expires = new Date(data.expiresAt);
+      setHoldExpiresAt(expires);
+      setBreakdown(data.priceBreakdown);
+      const diff = Math.max(0, Math.floor((expires.getTime() - Date.now()) / 1000));
+      setTimeLeftSeconds(diff);
+      return data.holdToken;
+    } catch (err) {
+      const msg = (err as Error).message;
+      setHoldError(msg);
+      setHoldToken(null);
+      return null;
+    } finally {
+      setHoldingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (checkInDate && checkOutDate) {
+      requestHold(checkInDate, checkOutDate, numberOfGuests, promoCode);
     }
   }, [checkInDate, checkOutDate, numberOfGuests, promoCode]);
 
@@ -108,12 +138,13 @@ function BookingCheckoutContent() {
       setTimeLeftSeconds(remaining);
       if (remaining <= 0) {
         clearInterval(interval);
-        setHoldError("Your 10-minute hold has expired. Please refresh to re-reserve dates.");
-        setHoldToken(null);
+        setHoldError("Your 10-minute hold has expired. The dates will refresh automatically.");
+        // Auto-refresh hold
+        requestHold(checkInDate, checkOutDate, numberOfGuests, promoCode);
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [holdExpiresAt]);
+  }, [holdExpiresAt, checkInDate, checkOutDate, numberOfGuests, promoCode]);
 
   const formatCountdown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -121,14 +152,42 @@ function BookingCheckoutContent() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const handleFillTestCard = () => {
+    setCardNumber("4242 4242 4242 4242");
+    setCardExpiry("12/28");
+    setCardCvc("888");
+    if (!cardName && guestName) setCardName(guestName);
+    else if (!cardName) setCardName("Dr. Clara Schumann");
+  };
+
+  const handleCheckInChange = (newIn: string) => {
+    setCheckInDate(newIn);
+    // If check-out is on or before new check-in, push check-out forward by 2 nights
+    if (!checkOutDate || checkOutDate <= newIn) {
+      const d = new Date(newIn);
+      d.setDate(d.getDate() + 2);
+      setCheckOutDate(d.toISOString().split("T")[0]);
+    }
+  };
+
   const handleCompleteBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!holdToken) {
-      setPaymentError("Active booking hold required. Please re-select dates.");
+
+    if (!checkInDate || !checkOutDate) {
+      setPaymentError("Please select both check-in and check-out dates.");
       return;
     }
-    if (!guestName || !guestEmail || !guestPhone) {
-      setPaymentError("Please provide all required guest contact fields.");
+
+    if (!guestName.trim()) {
+      setPaymentError("Please enter the primary guest's full name.");
+      return;
+    }
+    if (!guestEmail.trim()) {
+      setPaymentError("Please enter your email address for booking confirmation.");
+      return;
+    }
+    if (!guestPhone.trim()) {
+      setPaymentError("Please enter your mobile phone number for check-in PIN dispatch.");
       return;
     }
 
@@ -136,14 +195,22 @@ function BookingCheckoutContent() {
     setPaymentError(null);
 
     try {
+      // Ensure we have an active hold token, or request one right now
+      let activeHold = holdToken;
+      if (!activeHold) {
+        activeHold = await requestHold(checkInDate, checkOutDate, numberOfGuests, promoCode);
+      }
+
       const res = await fetch("/api/bookings/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          holdToken,
-          guestName,
-          guestEmail,
-          guestPhone,
+          holdToken: activeHold || undefined,
+          checkInDate,
+          checkOutDate,
+          guestName: guestName.trim(),
+          guestEmail: guestEmail.trim(),
+          guestPhone: guestPhone.trim(),
           numberOfGuests,
           promoCode: promoCode.trim() || undefined,
           specialRequests,
@@ -188,7 +255,7 @@ function BookingCheckoutContent() {
 
           {/* 10-Minute Hold Banner */}
           {holdToken && !holdError && (
-            <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex items-center justify-between">
+            <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex items-center justify-between shadow-xs">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-amber-800 text-white shrink-0">
                   <Clock className="w-5 h-5 animate-pulse" />
@@ -198,7 +265,7 @@ function BookingCheckoutContent() {
                     Dates Held Exclusively For You
                   </span>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    Other guests cannot book these dates while your hold is active.
+                    Other guests cannot reserve these dates while your hold is active.
                   </p>
                 </div>
               </div>
@@ -217,19 +284,90 @@ function BookingCheckoutContent() {
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">{holdError}</p>
-                <Link href="/#calendar" className="text-xs underline font-medium mt-1 inline-block">
-                  Click here to return to the calendar and pick new dates
-                </Link>
+                <p className="text-xs mt-1">Please select different dates below.</p>
               </div>
             </div>
           )}
 
           <form onSubmit={handleCompleteBooking} className="space-y-8">
-            {/* Step 1: Guest Information */}
+            {/* Step 1: Stay Dates & Guests Selection */}
             <div className="bg-white rounded-2xl p-6 sm:p-8 border border-stone-200 shadow-sm space-y-5">
               <h2 className="font-serif text-lg font-semibold text-stone-900 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-stone-900 text-white text-xs flex items-center justify-center font-sans font-bold">
                   1
+                </span>
+                Trip Dates & Guests
+              </h2>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="checkout-checkin" className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
+                    Check-in Date *
+                  </label>
+                  <input
+                    id="checkout-checkin"
+                    type="date"
+                    required
+                    min={todayStr}
+                    value={checkInDate}
+                    onChange={(e) => handleCheckInChange(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm font-semibold text-stone-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-800/20 cursor-pointer"
+                  />
+                  <span className="text-[11px] text-stone-500 mt-1 block">Check-in starts at 15:00 CET</span>
+                </div>
+
+                <div>
+                  <label htmlFor="checkout-checkout" className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
+                    Check-out Date *
+                  </label>
+                  <input
+                    id="checkout-checkout"
+                    type="date"
+                    required
+                    min={checkInDate || todayStr}
+                    value={checkOutDate}
+                    onChange={(e) => setCheckOutDate(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm font-semibold text-stone-800 bg-white focus:outline-none focus:ring-2 focus:ring-amber-800/20 cursor-pointer"
+                  />
+                  <span className="text-[11px] text-stone-500 mt-1 block">Check-out by 11:00 CET</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
+                    Number of Guests
+                  </label>
+                  <select
+                    value={numberOfGuests}
+                    onChange={(e) => setNumberOfGuests(Number(e.target.value))}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-800/20 bg-white font-medium"
+                  >
+                    <option value={1}>1 Guest</option>
+                    <option value={2}>2 Guests</option>
+                    <option value={3}>3 Guests</option>
+                    <option value={4}>4 Guests (Max)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
+                    Promotional Code (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. WELCOME10"
+                    value={promoCode}
+                    onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                    className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-800/20 font-mono uppercase"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2: Guest Information */}
+            <div className="bg-white rounded-2xl p-6 sm:p-8 border border-stone-200 shadow-sm space-y-5">
+              <h2 className="font-serif text-lg font-semibold text-stone-900 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-stone-900 text-white text-xs flex items-center justify-center font-sans font-bold">
+                  2
                 </span>
                 Guest Contact Details
               </h2>
@@ -269,7 +407,7 @@ function BookingCheckoutContent() {
                   </span>
                 </div>
 
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
                     Mobile Phone *
                   </label>
@@ -281,22 +419,6 @@ function BookingCheckoutContent() {
                     placeholder="+49 170 1234567"
                     className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-800/20"
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 uppercase tracking-wider mb-1">
-                    Number of Guests
-                  </label>
-                  <select
-                    value={numberOfGuests}
-                    onChange={(e) => setNumberOfGuests(Number(e.target.value))}
-                    className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-800/20 bg-white"
-                  >
-                    <option value={1}>1 Guest</option>
-                    <option value={2}>2 Guests</option>
-                    <option value={3}>3 Guests</option>
-                    <option value={4}>4 Guests (Max)</option>
-                  </select>
                 </div>
               </div>
 
@@ -314,12 +436,12 @@ function BookingCheckoutContent() {
               </div>
             </div>
 
-            {/* Step 2: Payment Details (Test Mode) */}
+            {/* Step 3: Payment Details (Test Mode) */}
             <div className="bg-white rounded-2xl p-6 sm:p-8 border border-stone-200 shadow-sm space-y-5">
               <div className="flex items-center justify-between">
                 <h2 className="font-serif text-lg font-semibold text-stone-900 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-stone-900 text-white text-xs flex items-center justify-center font-sans font-bold">
-                    2
+                    3
                   </span>
                   Payment Method (Stripe Test Mode)
                 </h2>
@@ -329,15 +451,24 @@ function BookingCheckoutContent() {
                 </span>
               </div>
 
-              {/* Test mode notice */}
-              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200/60 text-xs text-amber-900 space-y-1">
-                <p className="font-semibold flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-800" />
-                  Stripe Test Mode Activated
-                </p>
-                <p className="text-amber-800/90 leading-relaxed">
-                  Use any valid test card (e.g. 4242 4242 4242 4242). No real charges will be made.
-                </p>
+              {/* Test mode notice with Auto-fill helper */}
+              <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200/70 text-xs text-amber-900 flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <p className="font-semibold flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-800" />
+                    Stripe Test Mode Activated
+                  </p>
+                  <p className="text-amber-800/90 text-[11px]">
+                    Pre-loaded with sample test card. No real money will be charged.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleFillTestCard}
+                  className="px-3 py-1.5 rounded-lg bg-amber-800 text-white font-medium text-xs shrink-0 hover:bg-amber-900 transition-colors shadow-2xs cursor-pointer"
+                >
+                  Use Test Card
+                </button>
               </div>
 
               <div className="space-y-4">
@@ -365,7 +496,7 @@ function BookingCheckoutContent() {
                       required
                       value={cardNumber}
                       onChange={(e) => setCardNumber(e.target.value)}
-                      placeholder="4242 •••• •••• 4242"
+                      placeholder="4242 4242 4242 4242"
                       className="w-full px-4 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-800/20 pr-10 font-mono"
                     />
                     <CreditCard className="w-5 h-5 text-stone-400 absolute right-3 top-2.5" />
@@ -404,16 +535,17 @@ function BookingCheckoutContent() {
               </div>
 
               {paymentError && (
-                <div className="p-3 rounded-xl bg-red-50 text-red-700 text-xs flex items-start gap-2">
+                <div className="p-3.5 rounded-xl bg-red-50 text-red-700 text-xs flex items-start gap-2 border border-red-200">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{paymentError}</span>
                 </div>
               )}
 
+              {/* Confirm & Pay Button — ALWAYS ACTIVE & RESPONSIVE */}
               <button
                 type="submit"
-                disabled={processingPayment || !holdToken || Boolean(holdError)}
-                className="w-full py-4 rounded-2xl bg-amber-800 hover:bg-amber-900 text-white font-semibold text-base shadow-lg hover:shadow-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                disabled={processingPayment}
+                className="w-full py-4 rounded-2xl bg-amber-800 hover:bg-amber-900 active:scale-[0.99] text-white font-semibold text-base shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
               >
                 {processingPayment ? (
                   <span>Authorizing Test Payment...</span>
@@ -466,11 +598,11 @@ function BookingCheckoutContent() {
             <div className="space-y-3 text-xs text-stone-600">
               <div className="flex justify-between py-1">
                 <span className="font-medium text-stone-800">Check-in:</span>
-                <span>{checkInDate || "Not chosen"} (from 15:00)</span>
+                <span className="font-semibold text-stone-900">{checkInDate || "Not chosen"} (from 15:00)</span>
               </div>
               <div className="flex justify-between py-1">
                 <span className="font-medium text-stone-800">Check-out:</span>
-                <span>{checkOutDate || "Not chosen"} (by 11:00)</span>
+                <span className="font-semibold text-stone-900">{checkOutDate || "Not chosen"} (by 11:00)</span>
               </div>
               <div className="flex justify-between py-1">
                 <span className="font-medium text-stone-800">Guests:</span>
@@ -478,24 +610,8 @@ function BookingCheckoutContent() {
               </div>
             </div>
 
-            {/* Promo Code Input */}
-            <div className="pt-2">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-stone-500 block mb-1">
-                Promotional Code
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. WELCOME10"
-                  value={promoCode}
-                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                  className="flex-1 px-3 py-2 text-xs rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-800/20"
-                />
-              </div>
-            </div>
-
             {/* Itemized Transparent Breakdown */}
-            {breakdown && (
+            {breakdown ? (
               <div className="pt-6 border-t border-stone-100 space-y-2.5 text-xs text-stone-600">
                 <div className="flex justify-between">
                   <span>
@@ -533,6 +649,10 @@ function BookingCheckoutContent() {
                     {formatMinorToEuro(breakdown.finalTotalMinor)}
                   </span>
                 </div>
+              </div>
+            ) : (
+              <div className="pt-4 border-t border-stone-100 text-xs text-stone-400 text-center py-4">
+                Select dates on the left to calculate live quote
               </div>
             )}
 

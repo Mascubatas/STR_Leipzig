@@ -406,6 +406,7 @@ export default function HomePage() {
               checkOut={selectedCheckOut}
               basePriceMinor={LEIPZIG_PROPERTY_SEED.basePriceMinor}
               minStayNights={LEIPZIG_PROPERTY_SEED.minStayNights}
+              onDatesChange={handleSelectDates}
             />
           </div>
         </div>

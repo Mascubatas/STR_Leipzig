@@ -289,7 +289,9 @@ class BookingMemoryStore {
 
   // Confirm booking
   async confirmBooking(params: {
-    holdToken: string;
+    holdToken?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
     guestName: string;
     guestEmail: string;
     guestPhone: string;
@@ -298,19 +300,29 @@ class BookingMemoryStore {
     specialRequests?: string;
     paymentId?: string;
   }): Promise<BookingRecord> {
-    const hold = this.getHold(params.holdToken);
-    if (!hold) {
-      throw new Error("Your 10-minute booking hold has expired. Please select dates again.");
+    let checkIn = "";
+    let checkOut = "";
+
+    const hold = params.holdToken ? this.getHold(params.holdToken) : undefined;
+    if (hold) {
+      checkIn = hold.checkInDate;
+      checkOut = hold.checkOutDate;
+      hold.status = "CONVERTED";
+    } else if (params.checkInDate && params.checkOutDate) {
+      checkIn = params.checkInDate;
+      checkOut = params.checkOutDate;
+    } else {
+      throw new Error("Your booking hold has expired or dates are missing. Please re-select your dates.");
     }
 
     // Double check availability excluding this hold
     const conflict = this.checkDatesConflict(
-      hold.checkInDate,
-      hold.checkOutDate,
+      checkIn,
+      checkOut,
       params.holdToken
     );
     if (conflict.hasConflict) {
-      throw new Error("Selected dates are no longer available.");
+      throw new Error(conflict.reason || "Selected dates are no longer available.");
     }
 
     // Calculate guaranteed price on server
@@ -319,8 +331,8 @@ class BookingMemoryStore {
       cleaningFeeMinor: this.property.cleaningFeeMinor,
       weekendSurchargeMinor: this.property.weekendSurchargeMinor,
       touristTaxRatePercent: this.property.touristTaxRatePercent,
-      checkInDate: hold.checkInDate,
-      checkOutDate: hold.checkOutDate,
+      checkInDate: checkIn,
+      checkOutDate: checkOut,
       promoCode: params.promoCode,
     });
 
@@ -333,7 +345,7 @@ class BookingMemoryStore {
       ref: bookingReference,
       property: "The Augustus Loft Leipzig",
       guest: params.guestName,
-      dates: `${hold.checkInDate} to ${hold.checkOutDate}`,
+      dates: `${checkIn} to ${checkOut}`,
       verifyUrl: `https://leipzigstay.de/confirmation/${bookingReference}`,
     });
     const qrCodeDataUrl = await QRCode.toDataURL(qrPayload, {
@@ -345,8 +357,9 @@ class BookingMemoryStore {
       },
     });
 
-    // Mark hold as converted
-    hold.status = "CONVERTED";
+    if (hold) {
+      hold.status = "CONVERTED";
+    }
 
     const booking: BookingRecord = {
       id: `book-${Date.now()}-${randomSuffix}`,
@@ -355,8 +368,8 @@ class BookingMemoryStore {
       guestName: params.guestName,
       guestEmail: params.guestEmail.toLowerCase().trim(),
       guestPhone: params.guestPhone,
-      checkInDate: hold.checkInDate,
-      checkOutDate: hold.checkOutDate,
+      checkInDate: checkIn,
+      checkOutDate: checkOut,
       nights: breakdown.nightsCount,
       numberOfGuests: params.numberOfGuests,
       totalAmountMinor: breakdown.finalTotalMinor,
@@ -380,8 +393,8 @@ class BookingMemoryStore {
       entityId: bookingReference,
       details: {
         totalAmountMinor: breakdown.finalTotalMinor,
-        checkInDate: hold.checkInDate,
-        checkOutDate: hold.checkOutDate,
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
       },
     });
 
