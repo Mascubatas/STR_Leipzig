@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     siteName: "LeipzigStay",
     images: [
       {
-        url: "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1600&q=80",
+        url: "/pictures/ij_LTHfJV-large.jpg",
         width: 1600,
         height: 1067,
         alt: "The Augustus Loft Leipzig Living Room",

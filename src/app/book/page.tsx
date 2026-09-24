@@ -578,7 +578,7 @@ function BookingCheckoutContent() {
             {/* Property mini card */}
             <div className="flex gap-4 items-center pb-6 border-b border-stone-100">
               <img
-                src="https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=400&q=80"
+                src="/pictures/ij_LTHfJV-large.jpg"
                 alt="Augustus Loft"
                 className="w-20 h-20 rounded-2xl object-cover shrink-0"
               />
